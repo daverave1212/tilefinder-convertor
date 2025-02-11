@@ -11,11 +11,11 @@ function lex(line, operators=null) {
     return words.map(word => word.value)
 }
 
-function expressizeLine(line) {
-    const words = lex(line)
-    const expressions = []
-    for (const word of ...Grammar.)
-}
+// function expressizeLine(line) {
+//     const words = lex(line)
+//     const expressions = []
+//     for (const word of ...Grammar.)
+// }
 
 function isSpace(str) {
     return str.trim().length == 0
@@ -100,12 +100,14 @@ function capitalizeFunctions(str) {
 
 function getIndentation(line) {
     let indentation = 0
-    while (isSpace(line[indentation])) {
-        if (line[indentation] == '\t') {
+    let i = 0
+    while (isSpace(line[i])) {
+        if (line[i] == '\t') {
             indentation += 4
         } else {
             indentation++
         }
+        i++
     }
     return indentation
 }
@@ -216,9 +218,7 @@ function replaceConstants(line) {
     if (varType == null) {
         return line
     }
-    
-    line = line.replaceAll(varName, `${varType} ${varName}`)
-    
+    line = line.replace(varName, `${varType} ${varName}`)
     return line
 }
 
@@ -230,34 +230,6 @@ function replaceOneType(line) {
 
     if (line.includes('case ')) {
         return line
-    }
-
-    const words = lex(line)
-    const colonI = words.findIndex(word => word == ':')
-
-    let varName
-    if (words[colonI - 1] != ')') {
-        varName = words[colonI - 1]
-    } else {
-        let i = colonI - 2
-        let parStack = [')']
-        while (i >= 0) {
-            
-            if (Grammar.specialOperators.includes(words[i])) {
-                if (words[i] == ')') {
-                    parStack.push(')')
-                }
-                if (words[i] == parStack[parStack.length - 1]) {
-                    parStack.pop()
-                }
-            }
-
-            if (parStack.length == 0) {
-                varName = words[i]
-            }
-
-            i--
-        }
     }
 
     const stringStack = []
@@ -400,6 +372,90 @@ function fixSwitch(line) {
     line = line.replaceAll(' {', ') {')
     return line
 }
+function fixCase(line) {
+    if (line.includes('case ') == false || line.includes(':') == false || line.includes(',') == false) {
+        return line
+    }
+    const indentation = getIndentation(line)
+    const words = splitCodeIntoTokens(line, [';', ')', '(', ':', ','], Grammar.separators).map(word => word.value)
+    const caseI = words.findIndex(word => word)
+    const foundCaseValues = []
+    let commaMaybeI = caseI + 2
+    while (words[commaMaybeI] == ',') {
+        const commaMaybe = words[commaMaybeI]
+        if (commaMaybe == ',' || commaMaybe == ':') {
+            foundCaseValues.push(words[commaMaybeI - 1])
+        }
+        commaMaybeI += 2
+    }
+
+    const firstCaseI = line.indexOf('case')
+    const firstPart = line.substring(0, firstCaseI)
+    const caseEndI = line.indexOf(':')
+    const endPart = line.substring(caseEndI + 1)
+
+    const rebuiltCases = foundCaseValues.map(val => `case ${val}:`).join(' ')
+    
+    return firstPart + rebuiltCases + endPart
+}
+function includesBaseLevel(line, str) {
+    let parStart = -1
+    let parEnd = -1
+    const paranthesisStack = []
+    for (let i = 0; i < line.length; i++) {
+        const char = line.at(i)
+        if (char == '(' || char == '[' || char == '{') {
+            if (paranthesisStack.length == 0) {
+                parStart = i
+            }
+            paranthesisStack.push(char)
+        }
+        if (char == ')' || char == ']' || char == '}') {
+            paranthesisStack.pop()
+            if (paranthesisStack.length == 0) {
+                parEnd = i
+            }
+        }
+    }
+    if (parStart == -1 && parEnd == -1) {
+        return line.includes(str)
+    }
+    if (parStart == -1 && parEnd != -1) {
+        return line.substring(0, parEnd).includes(str)
+    }
+    if (parStart != -1 && parEnd == -1) {
+        return line.substring(0, parStart).includes(str)
+    }
+    if (parStart != -1 && parEnd != -1) {
+        return (line.substring(0, parStart) + ' ' + line.substring(parEnd + 1)).includes(str)
+    }
+    return line.includes(str)
+}
+function replaceMapImplicitValue(line) {
+    if (line.includes('=>') == false) {
+        return line;
+    }
+
+    const indentation = getIndentation(line)
+    let lineTrimmed = line.trim()
+    const hasComma = lineTrimmed.endsWith(',')
+    if (hasComma) {
+        lineTrimmed = lineTrimmed.substring(0, lineTrimmed.length - 1)
+    }
+
+    lineTrimmed = lineTrimmed.replace(' => ', ', ')
+    lineTrimmed = lineTrimmed.replace('\t=> ', ', ')
+    lineTrimmed = '{ ' + lineTrimmed + ' }'
+    if (hasComma) {
+        lineTrimmed += ','
+    }
+
+    for (let i = 1; i <= indentation; i++) {
+        lineTrimmed = ' ' + lineTrimmed
+    }
+
+    return lineTrimmed
+}
 
 function replaceConstructorCS(lines) {
     let currentClass
@@ -415,8 +471,21 @@ function replaceConstructorCS(lines) {
     return lines
 }
 
+function replaceWeirdSpacing(line) {
+    const indentation = getIndentation(line)
+    line = line.trim()
+    line = line.replaceAll('\t', ' ')
+    while (line.includes('  ')) {
+        line = line.replace('  ', ' ')
+    }
+    for (let i = 1; i <= indentation; i++) {
+        line = ' ' + line
+    }
+    return line
+}
 
-let debug = true
+
+let debug = false
 if (debug) {
     let line = `	public static function getNextIInDirection(i: Int, direction: Int): Int {`
     while (line.includes(':')) {
@@ -485,6 +554,9 @@ for (let line of haxeLines) {
     if (line.includes('switch')) {
         line = fixSwitch(line)
     }
+    if (line.includes('case ')) {
+        line = fixCase(line)
+    }
     if (line.includes('...')) {
         line = replaceFor(line)
     }
@@ -497,6 +569,10 @@ for (let line of haxeLines) {
     if (line.includes('var')) {
         line = replaceConstants(line)
     }
+    if (line.includes('=>')) {
+        line = replaceMapImplicitValue(line)
+    }
+    line = replaceWeirdSpacing(line)
     
     while (line.includes(':')) {
         const oldLine = line
@@ -539,14 +615,26 @@ csFile = csFile.replaceAll("function Add", 'void Add')
 csFile = csFile.replaceAll("function Subtract", 'void Subtract')
 csFile = csFile.replaceAll("function Keys", 'string[] Keys')
 
+// Fixes
+csFile = csFile.replaceAll('return default', 'default: return')
+
 // Small conversions
 csFile = csFile.replaceAll('return ["', 'return new string[] { "')
 csFile = csFile.replaceAll('= [', '= { ')
 csFile = csFile.replaceAll('"]', '" }')
 csFile = csFile.replaceAll('];', ' };')
-
-// Fixes
-csFile = csFile.replaceAll('return default', 'default: return')
+csFile = csFile.replaceAll('return [', 'return new[] { ')
+csFile = csFile.replaceAll('.length', '.Length')
 
 const finalFileName = csFolderPath + '\\' + folderName + '\\' + fileName + '.cs'
 fs.writeFileSync(finalFileName, csFile, { encoding:'utf8' })
+
+
+
+// CHANGES
+//   replaceConstants
+//   getIndentation
+//   includesBaseValue
+//   fixCase
+//   replaceMapImplicitValue
+//   Small conversions and Fixes
